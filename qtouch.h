@@ -96,8 +96,8 @@ public:
         is_touched_ = true;
         midi_callback_ = callback;
         // MIDI Note On
-        if (midi_callback_) {
-            midi_callback_(0x90, center_location_, intensity_); // Example MIDI Note On message
+        if (callback) {
+            callback(0x90, center_location_, intensity_); // Example MIDI Note On message
         }
     }
 
@@ -116,8 +116,10 @@ public:
         is_updated_ = true;
         is_touched_ = true;
         // MIDI Note On & Off
-        midi_callback_(0x90, static_cast<uint8_t>(center_location_), intensity_);
-        midi_callback_(0x80, static_cast<uint8_t>(previous_location), 0x40);
+        if (midi_callback_) {
+            midi_callback_(0x90, static_cast<uint8_t>(center_location_), intensity_);
+            midi_callback_(0x80, static_cast<uint8_t>(previous_location), 0x40);
+        }
     }
 
     auto is_touched() const -> bool {
@@ -275,12 +277,18 @@ public:
 
     /// LEDを点灯させるためのコールバック関数をコールする
     void lighten_leds(std::function<void(float, int16_t)> led_callback) {
+        bool empty = true;
         for (auto& tp : touch_points_) {
             if (tp.is_touched()) {
                 float location = tp.get_location();
                 int16_t intensity = tp.get_intensity();
                 led_callback(location, intensity);
+                empty = false;
             }
+        }
+        if (empty) {
+            // Call the callback with default values if no touch points are active
+            led_callback(-1.0f, 0);
         }
     }
 

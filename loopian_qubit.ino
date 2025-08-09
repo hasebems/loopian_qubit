@@ -128,11 +128,11 @@ void loop() {
     show_one_line(1, sv[2], sv[3]);
     show_one_line(2, sv[4], sv[5]);
     qt.seek_and_update_touch_point();
-    init_touch_values();
     qt.lighten_leds(set_led_for_touch);
   }
 
   // Lighten LEDs (NeoPixel)
+  set_led_for_wave(gt.globalTime());
   update_neo_pixel();
 
   if (gt.timer100msecEvent()) {
@@ -290,52 +290,73 @@ void init_neo_pixel() {
   }
   update_neo_pixel();
 }
-void init_touch_values() {
-  for (int i = 0; i < MAX_SENS; i++) {
+void clear_touch_leds() {
+    for (int i = 0; i < MAX_SENS; i++) {
     neo_pixel[i][0] = 0; // red
     neo_pixel[i][1] = 0; // green
     neo_pixel[i][2] = 0; // blue
   }
 }
+//-----------------------------------------------------------
 void set_led_for_touch(float locate, int16_t sensor_value) {
-  if (locate < 0.0f || locate >= static_cast<float>(MAX_SENS)) {
+  if (locate < 0.0f) {
+    clear_touch_leds();
+    return; // Invalid location
+  }
+  if (locate >= static_cast<float>(MAX_SENS)) {
     return; // Invalid location
   }
   if (sensor_value <= 1) {
     sensor_value = 1;
   }
+  clear_touch_leds();
 
-  const float KATAMUKI = 20000.0f / sensor_value;
+  const float SLOPE = 20000.0f / sensor_value; // 傾き:小さいほどたくさん光る
   float nearest_lower = std::floor(locate);
   float nearest_upper = std::ceil(locate);
 
   while (1) {
-    int16_t this_val = static_cast<int16_t>(255 - (locate - nearest_lower)*KATAMUKI);
+    int16_t this_val = static_cast<int16_t>(255 - (locate - nearest_lower)*SLOPE);
     if (this_val < 0) {break;}
     set_touch_led(static_cast<int>(nearest_lower), this_val);
     nearest_lower -= 1.0f;
   }
   while (1) {
-    int16_t this_val = static_cast<int16_t>(255 - (nearest_upper - locate)*KATAMUKI);
+    int16_t this_val = static_cast<int16_t>(255 - (nearest_upper - locate)*SLOPE);
     if (this_val < 0) {break;}
     set_touch_led(static_cast<int>(nearest_upper), this_val);
     nearest_upper += 1.0f;
   }
 }
+//-----------------------------------------------------------
 void set_touch_led(int index, uint8_t intensity) {
   uint8_t red = (intensity * 4) / 5;
   uint8_t blue = (intensity * 1) / 5;
-  set_neo_pixel(index, red, 0, blue, 0); // Set only red and blue channels
+  set_neo_pixel(index, red, 0, blue, -1); // Set only red and blue channels
 }
-void set_neo_pixel(int index, uint8_t red, uint8_t green, uint8_t blue, uint8_t white) {
+//-----------------------------------------------------------
+void set_led_for_wave(uint16_t global_time) {
+  float tm = static_cast<float>(global_time); // convert to seconds
+  for (int i = 0; i < MAX_LIGHT; i++) {
+    float phase = (tm * 0.002f + static_cast<float>(i) * 0.1f) * 2 * PI;
+    uint8_t intensity = static_cast<uint8_t>(10.0f * (std::sin(phase)) + 10.0f);
+    set_white_led(i, intensity);
+  }
+}
+//-----------------------------------------------------------
+void set_white_led(int index, uint8_t intensity) {
+  set_neo_pixel(index, -1, -1, -1, intensity); // Set only red and blue channels
+}
+//-----------------------------------------------------------
+void set_neo_pixel(int index, int16_t red, int16_t green, int16_t blue, int16_t white) {
   while (index < 0) {
     index += MAX_SENS; // Wrap around if negative
   }
   index %= MAX_SENS;
-  neo_pixel[index][0] = red;
-  neo_pixel[index][1] = green;
-  neo_pixel[index][2] = blue;
-  neo_pixel[index][3] = white;
+  if (red != -1)    {neo_pixel[index][0] = static_cast<uint8_t>(red);}
+  if (green != -1)  {neo_pixel[index][1] = static_cast<uint8_t>(green);}
+  if (blue != -1)   {neo_pixel[index][2] = static_cast<uint8_t>(blue);}
+  if (white != -1)  {neo_pixel[index][3] = static_cast<uint8_t>(white);}
 }
 void update_neo_pixel() {
   sk.clear();
