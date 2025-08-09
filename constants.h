@@ -12,9 +12,8 @@
 #define CONSTANTS_H
 
 constexpr int CUBIT_VERSION = 0;
-//constexpr bool TEST_MODE = true; // true: Test Mode, false: Normal Mode
-#define TEST_MODE
 
+#define TEST_MODE
 #ifdef TEST_MODE
 constexpr int MAX_KAMABOKO_NUM = 1;
 #else

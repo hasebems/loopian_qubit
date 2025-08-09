@@ -3,10 +3,11 @@
 //  Released under the MIT license
 //  https://opensource.org/licenses/mit-license.php
 //
-#include <string>
+#include <sstream>   // ostringstream
+#include <iomanip> 
+#include <format>
 #include <Adafruit_TinyUSB.h>
 #include <MIDI.h>
-#include <Adafruit_NeoPixel.h>
 #include <RPi_Pico_TimerInterrupt.h> //https://github.com/khoih-prog/RPI_PICO_TimerInterrupt
 
 #include  "sk6812.h"
@@ -28,7 +29,6 @@
 /*----------------------------------------------------------------------------*/
 // USB MIDI object
 Adafruit_USBD_MIDI usb_midi;
-//Adafruit_NeoPixel pixels(1, 22);
 
 // Create a new instance of the Arduino MIDI Library,
 // and attach usb_midi as the transport.
@@ -68,17 +68,6 @@ void setup() {
 
   SSD1331_init();
 
-  //Neopixelの電源供給開始
-  //pinMode(POWER_PIN, OUTPUT);
-  //gpio_put(POWER_PIN, HIGH);
-  //pixels.begin();             //NeoPixel制御開始
-  //pixels.setBrightness(128);  //NeoPixelの明るさ設定
-  //pixels.setPixelColor(0, pixels.Color(255, 255, 255));
-  //pixels.show();
-  // 消灯
-  //pixels.setPixelColor(0, pixels.Color(0, 0, 0));
-  //pixels.show();
-
   //TinyUSB_Device_Init(0);
   //MIDI.setHandleNoteOn(handleNoteOn);
   //MIDI.setHandleNoteOff(handleNoteOff);
@@ -95,8 +84,9 @@ void setup() {
   AT42QT_init();
 
   // Interval in unsigned long microseconds
-  if (ITimer1.attachInterruptInterval(2000, TimerHandler)) { // 2ms
-    // success
+  if (!ITimer1.attachInterruptInterval(2000, TimerHandler)) { // 2ms
+    gpio_put(LED_RED, LOW);
+    assert(false); // Timer initialization failed
   }
 
   text_display[7][16] = {0};
@@ -132,13 +122,14 @@ void loop() {
     for (int i = 0; i < MAX_SENS; i++) {
       int sensor_value = get_sensor_values(i);
       qt.set_value(i, sensor_value);
-      set_color(i, sensor_value*5, 0, sensor_value*2, sensor_value*5);
       sv[i] = sensor_value;
     }
     show_one_line(0, sv[0], sv[1]);
     show_one_line(1, sv[2], sv[3]);
     show_one_line(2, sv[4], sv[5]);
     qt.seek_and_update_touch_point();
+    init_touch_values();
+    qt.lighten_leds(set_led_for_touch);
   }
 
   // Lighten LEDs (NeoPixel)
@@ -262,12 +253,27 @@ void show_one_line(int line, int value1, int value2) {
     SSD1331_display(text_display[line], line);
 }
 void show_debug_info() {
-    std::string temp_str = std::to_string(gt.timer1s()) ;
-    temp_str += " tch:" + std::to_string(qt.get_touch_count());
-    temp_str += "/" + std::to_string(MAX_TOUCH_POINTS);
-    temp_str += ":" + std::to_string(MAX_SENS);
-    const char* dbg_info = temp_str.c_str();
-    SSD1331_display(dbg_info, 5);  
+    //std::string temp_str = std::to_string(gt.timer1s());
+    std::string temp_str = std::to_string(qt.get_touch_count());
+    //temp_str += "/" + std::to_string(MAX_TOUCH_POINTS);
+    //temp_str += ":" + std::to_string(MAX_SENS);
+    //const char* dbg_info = temp_str.c_str();
+
+    float disp_loc = qt.touch_point(0).get_location();
+    if (disp_loc == TouchPoint::INIT_VAL) {
+      temp_str += " L:---";
+    } else {
+      auto loc = std::ostringstream();
+      loc << std::fixed << std::setprecision(1) << disp_loc;
+      temp_str += " L:" + loc.str();
+    }
+    auto loc2 = std::ostringstream();
+    loc2 << std::fixed << std::setprecision(1) << qt.touch_point(0).get_intensity();
+    temp_str += "/" + loc2.str();
+    //auto loc3 = std::ostringstream();
+    //loc3 << std::fixed << std::setprecision(1) << qt.deb_val();
+    //temp_str += " D:" + loc3.str();
+    SSD1331_display(temp_str.c_str(), 5);
 }
 /*----------------------------------------------------------------------------*/
 //     NeoPixel
@@ -284,14 +290,52 @@ void init_neo_pixel() {
   }
   update_neo_pixel();
 }
-void set_color(int locate, uint8_t red, uint8_t green, uint8_t blue, uint8_t white) {
-  if (locate < 0 || locate >= MAX_SENS) {
+void init_touch_values() {
+  for (int i = 0; i < MAX_SENS; i++) {
+    neo_pixel[i][0] = 0; // red
+    neo_pixel[i][1] = 0; // green
+    neo_pixel[i][2] = 0; // blue
+  }
+}
+void set_led_for_touch(float locate, int16_t sensor_value) {
+  if (locate < 0.0f || locate >= static_cast<float>(MAX_SENS)) {
     return; // Invalid location
   }
-  neo_pixel[locate][0] = red;
-  neo_pixel[locate][1] = green;
-  neo_pixel[locate][2] = blue;
-  neo_pixel[locate][3] = white;
+  if (sensor_value <= 1) {
+    sensor_value = 1;
+  }
+
+  const float KATAMUKI = 20000.0f / sensor_value;
+  float nearest_lower = std::floor(locate);
+  float nearest_upper = std::ceil(locate);
+
+  while (1) {
+    int16_t this_val = static_cast<int16_t>(255 - (locate - nearest_lower)*KATAMUKI);
+    if (this_val < 0) {break;}
+    set_touch_led(static_cast<int>(nearest_lower), this_val);
+    nearest_lower -= 1.0f;
+  }
+  while (1) {
+    int16_t this_val = static_cast<int16_t>(255 - (nearest_upper - locate)*KATAMUKI);
+    if (this_val < 0) {break;}
+    set_touch_led(static_cast<int>(nearest_upper), this_val);
+    nearest_upper += 1.0f;
+  }
+}
+void set_touch_led(int index, uint8_t intensity) {
+  uint8_t red = (intensity * 4) / 5;
+  uint8_t blue = (intensity * 1) / 5;
+  set_neo_pixel(index, red, 0, blue, 0); // Set only red and blue channels
+}
+void set_neo_pixel(int index, uint8_t red, uint8_t green, uint8_t blue, uint8_t white) {
+  while (index < 0) {
+    index += MAX_SENS; // Wrap around if negative
+  }
+  index %= MAX_SENS;
+  neo_pixel[index][0] = red;
+  neo_pixel[index][1] = green;
+  neo_pixel[index][2] = blue;
+  neo_pixel[index][3] = white;
 }
 void update_neo_pixel() {
   sk.clear();
