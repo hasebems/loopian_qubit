@@ -44,13 +44,14 @@ constexpr int MAX_MIDI_NOTE = 128;
 //  Hardware
 constexpr uint8_t PCA9685_OFSADRS = 16;
 
-//#define USE_CY8CMBR3110
-//#define USE_ADA88
-//#define USE_PCA9685
-#define USE_AT42QT1070
-#define USE_PCA9544A
-#define USE_SSD1331
+//#define USE_CY8CMBR3110   // Cap Sense CY8CMBR3110: Adrs:0x37(possible to change)
+#define USE_ADA88     // Ada88 LED Driver: Adrs:0x70
+//#define USE_PCA9685   // LED Driver: Adrs:0x40
+#define USE_AT42QT1070  // Touch Sensor: Adrs:0x1B
+#define USE_PCA9544A    // I2C Multiplexer: Adrs:0x70-0x77
+#define USE_SSD1331     // OLED Driver: SPI Device
 
 void sendMidiMessage(uint8_t status, uint8_t note, uint8_t velocity);
+void debug_pt(int pt);
 
 #endif

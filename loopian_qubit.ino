@@ -47,19 +47,18 @@ struct OneTouch {
   int ref_value;
 };
 OneTouch tch[MAX_SENS];
-char text_display[7][16];
 int sensor_adjust_counter;
 QubitTouch qt([](uint8_t status, uint8_t note, uint8_t intensity) {
   // MIDI callback function
   sendMidiMessage(status, note, intensity);
 });
 
+int debug_loop_counter = 0; // Debug
+
 /*----------------------------------------------------------------------------*/
 //     setup
 /*----------------------------------------------------------------------------*/
 void setup() {
-  Serial.begin(115200);
-
   // Device Discriptor
   TinyUSBDevice.setManufacturerDescriptor("Kigakudoh");
   TinyUSBDevice.setProductDescriptor("Loopian::QUBIT");
@@ -92,6 +91,7 @@ void setup() {
   // I2C
   wireBegin();
   AT42QT_init();
+  debug_init();
 
   // Interval in unsigned long microseconds
   if (!ITimer1.attachInterruptInterval(2000, TimerHandler)) { // 2ms
@@ -99,7 +99,6 @@ void setup() {
     assert(false); // Timer initialization failed
   }
 
-  text_display[7][16] = {0};
   sensor_adjust_counter = 0;
   init_neo_pixel();
 
@@ -111,18 +110,19 @@ void setup() {
     tch[i].ref_value = refval;
   }
 
-  Serial.println("Loopian::QUBIT started");
+  debug_setup_end();
 }
 /*----------------------------------------------------------------------------*/
 //     loop
 /*----------------------------------------------------------------------------*/
 void loop() {
-  check_usb_status();
+  debug_loop_counter++;
+  check_usb_status(); debug_pt(100);
 
   //  Global Timer 
   long difftm = generateTimer();
   int cnt = gt.timer100ms()%10;
-  bool stable = gt.timer1s() > 5;
+  bool stable = gt.timer1s() > 3; // 3 seconds after start
   // Heartbeat LED
   if (cnt<5){
     gpio_put(LED_BLUE, LOW);
@@ -132,7 +132,7 @@ void loop() {
   }
 
   // read any new MIDI messages
-  MIDI.read();
+  MIDI.read();  debug_pt(200);
   if (gt.timer10msecEvent()) {
     int sv[MAX_SENS] = {0};
     for (int i = 0; i < MAX_SENS; i++) {
@@ -140,29 +140,30 @@ void loop() {
       qt.set_value(i, sensor_value);
       sv[i] = sensor_value;
     }
-    show_one_line(0, sv[0], sv[1]);
-    show_one_line(1, sv[2], sv[3]);
-    show_one_line(2, sv[4], sv[5]);
+    debug_pt(210);
     if (stable) {
       qt.seek_and_update_touch_point();
       clear_touch_leds();
       qt.lighten_leds(callback_for_set_led);
     }
-  }
+  }  debug_pt(300);
 
   // Lighten LEDs (NeoPixel)
   set_led_for_wave(gt.globalTime());
   update_neo_pixel();
+  debug_pt(400);
 
   if (gt.timer100msecEvent()) {
-    show_debug_info();
-
     // Update sensor ref values
     read_ref_sensor_values(sensor_adjust_counter);
     sensor_adjust_counter++;
     if (sensor_adjust_counter >= MAX_SENS) {
       sensor_adjust_counter = 0;
     }
+
+    debug_pt(500);
+    show_debug_info();
+    debug_loop_counter = 0; // Reset debug loop counter
   }
 }
 /*----------------------------------------------------------------------------*/
@@ -236,13 +237,9 @@ void sendMidiMessage(uint8_t status, uint8_t note, uint8_t velocity) {
   uint8_t channel = (status & 0x0F) + 1;
   switch(status & 0xF0) {
       case 0x90: // Note On
-          Serial.println("USB MIDI: Note On");
-          Serial.println(note);
           MIDI.sendNoteOn(note, velocity, channel);
           break;
       case 0x80: // Note Off
-          Serial.println("USB MIDI: Note Off");
-          Serial.println(note);
           MIDI.sendNoteOff(note, velocity, channel);
           break;
       case 0xB0: // Control Change
@@ -262,8 +259,10 @@ void show_one_line(int line, int value1, int value2) {
     if (line < 0 || line >= 3) {
         return; // Invalid line number
     }
+    char text_display[7][16];
     std::fill(std::begin(text_display[line]), std::end(text_display[line]), 32);
     size_t idx = 0;
+
     for (int i=0; i<8; i++) {
       if (value1 > 4) {
         text_display[line][idx] = 'o';
@@ -286,27 +285,24 @@ void show_one_line(int line, int value1, int value2) {
     SSD1331_display(text_display[line], line);
 }
 void show_debug_info() {
-    //std::string temp_str = std::to_string(gt.timer1s());
-    std::string temp_str = std::to_string(qt.get_touch_count());
-    //temp_str += "/" + std::to_string(MAX_TOUCH_POINTS);
-    //temp_str += ":" + std::to_string(MAX_SENS);
-    //const char* dbg_info = temp_str.c_str();
-
-    float disp_loc = qt.touch_point(0).get_location();
-    if (disp_loc == TouchPoint::INIT_VAL) {
-      temp_str += " L:---";
-    } else {
-      auto loc = std::ostringstream();
-      loc << std::fixed << std::setprecision(1) << disp_loc;
-      temp_str += " L:" + loc.str();
+    SSD1331_display("Loopian::QUBIT", 0);
+    for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
+      std::string disp_str = std::to_string(i) + "> ";
+      float disp_loc = qt.touch_point(i).get_location();
+      if (disp_loc == TouchPoint::INIT_VAL) {
+        disp_str += " L:---";
+      } else {
+        auto loc = std::ostringstream();
+        loc << std::fixed << std::setprecision(1) << disp_loc;
+        disp_str += " L:" + loc.str();
+      }
+      auto loc2 = std::ostringstream();
+      loc2 << std::fixed << std::setprecision(1) << qt.touch_point(i).get_intensity();
+      disp_str += "/" + loc2.str();
+      SSD1331_display(disp_str.c_str(), i+1);
     }
-    auto loc2 = std::ostringstream();
-    loc2 << std::fixed << std::setprecision(1) << qt.touch_point(0).get_intensity();
-    temp_str += "/" + loc2.str();
-    //auto loc3 = std::ostringstream();
-    //loc3 << std::fixed << std::setprecision(1) << qt.deb_val();
-    //temp_str += " D:" + loc3.str();
-    SSD1331_display(temp_str.c_str(), 5);
+    std::string loop_info = "LCntr: " + std::to_string(debug_loop_counter);
+    SSD1331_display(loop_info.c_str(), 5);
 }
 /*----------------------------------------------------------------------------*/
 //     NeoPixel
@@ -392,4 +388,25 @@ void update_neo_pixel() {
     sk.setPixelColor(i, neo_pixel[i][0], neo_pixel[i][1], neo_pixel[i][2], neo_pixel[i][3]);
   }
   sk.show();
+}
+/*----------------------------------------------------------------------------*/
+//     for Realtime Debugging
+/*----------------------------------------------------------------------------*/
+void debug_init() {
+  Serial.begin(115200);
+  #if defined(USE_ADA88)
+  ada88_init();
+  ada88_writeNumber(0);
+  #endif
+}
+void debug_setup_end() {
+  #if defined(USE_ADA88)
+  ada88_writeNumber(1);
+  #endif
+  Serial.println("Loopian::QUBIT started");
+}
+void debug_pt(int pt) {
+  #if defined(USE_ADA88)
+  ada88_writeNumber(pt);
+  #endif
 }
