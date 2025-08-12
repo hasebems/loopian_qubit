@@ -287,7 +287,6 @@ public:
             diff_before = diff_after;
         }
         touch_count_ = temp_index; // Update the touch count
-        debug_pt(220);
 
         // 2: タッチポイントの前後のパッドの値を足し、平均をとってパッドの位置と強度を確定する
         for (int i = 0; i < temp_index; ++i) {
@@ -306,7 +305,7 @@ public:
             locate /= sum; // Calculate the average location based on intensity
             std::get<1>(tpi) = locate;
             std::get<2>(tpi) = sum;
-        } debug_pt(230);
+        }
 
         // 3: 各パッドの値を確認し、タッチポイントを更新または追加する
         for (int k = 0; k < temp_index; ++k) {
@@ -315,7 +314,7 @@ public:
             int16_t intensity = std::get<2>(tpi);
             // 現在のタッチポイントで近いものがあれば、タッチポイントがそこから移動したとみなす
             float nearest = TouchPoint::INIT_VAL;
-            TouchPoint* nearest_tp = nullptr; debug_pt(240);
+            TouchPoint* nearest_tp = nullptr;
             for (auto& tp: touch_points_) {
                 if (!tp.is_touched() || tp.is_updated()) {
                     continue; // Skip if the touch point is not touched
@@ -327,17 +326,16 @@ public:
                     nearest_tp = &tp;
                 }
             }
-            debug_pt(250);
             if (nearest_tp && nearest_tp->is_near_here(location)) {
                 // 一番近いタッチポイントが、現在のタッチポイントに近い場合
                 nearest_tp->update_touch(location, intensity);
             } else {
                 new_touch_point(location, intensity, midi_callback_);
             }
-        } debug_pt(260);
+        }
 
         // 更新のなかったタッチポイントを削除する
-        erase_touch_point(); debug_pt(270);
+        erase_touch_point();
     }
     /// LEDを点灯させるためのコールバック関数をコールする
     void lighten_leds(std::function<void(float, int16_t)> led_callback) {

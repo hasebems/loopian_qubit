@@ -45,7 +45,7 @@ constexpr int MAX_MIDI_NOTE = 128;
 constexpr uint8_t PCA9685_OFSADRS = 16;
 
 //#define USE_CY8CMBR3110   // Cap Sense CY8CMBR3110: Adrs:0x37(possible to change)
-#define USE_ADA88     // Ada88 LED Driver: Adrs:0x70
+//#define USE_ADA88     // Ada88 LED Driver: Adrs:0x70
 //#define USE_PCA9685   // LED Driver: Adrs:0x40
 #define USE_AT42QT1070  // Touch Sensor: Adrs:0x1B
 #define USE_PCA9544A    // I2C Multiplexer: Adrs:0x70-0x77

@@ -10,11 +10,12 @@
 #include <MIDI.h>
 #include <RPi_Pico_TimerInterrupt.h> //https://github.com/khoih-prog/RPI_PICO_TimerInterrupt
 
-#include  "sk6812.h"
-#include  "peripheral.h"
-#include  "global_timer.h"
-#include  "qtouch.h"
-#include  "constants.h"
+#include "pico/multicore.h"
+#include "sk6812.h"
+#include "peripheral.h"
+#include "global_timer.h"
+#include "qtouch.h"
+#include "constants.h"
 
 /*----------------------------------------------------------------------------*/
 //     Constants
@@ -42,18 +43,20 @@ RPI_PICO_Timer ITimer1(1);
 
 GlobalTimer gt;
 
-struct OneTouch {
-  int raw_value;
-  int ref_value;
-};
-OneTouch tch[MAX_SENS];
-int sensor_adjust_counter;
 QubitTouch qt([](uint8_t status, uint8_t note, uint8_t intensity) {
   // MIDI callback function
   sendMidiMessage(status, note, intensity);
 });
 
 int debug_loop_counter = 0; // Debug
+/*------------------------------------------------------------------*/
+// Core 1
+volatile int sensor_values[MAX_SENS]; // Raw - Ref
+struct OneTouch {
+  int raw_value;  // Raw value from AT42QT1070
+  int ref_value;  // Reference value from AT42QT1070
+} tch[MAX_SENS];
+int sensor_adjust_counter;
 
 /*----------------------------------------------------------------------------*/
 //     setup
@@ -88,19 +91,20 @@ void setup() {
 
   SSD1331_init();
 
-  // I2C
-  wireBegin();
-  AT42QT_init();
-  debug_init();
-
   // Interval in unsigned long microseconds
   if (!ITimer1.attachInterruptInterval(2000, TimerHandler)) { // 2ms
     gpio_put(LED_RED, LOW);
     assert(false); // Timer initialization failed
   }
 
-  sensor_adjust_counter = 0;
   init_neo_pixel();
+  debug_setup_end();
+}
+void setup1() {
+  // I2C
+  wireBegin();
+  AT42QT_init();
+  debug_init();
 
   for (int i = 0; i < MAX_SENS; i++) {
     uint8_t raw[2];
@@ -108,16 +112,16 @@ void setup() {
     int refval = static_cast<int>(raw[0]) * 256 + raw[1];
     tch[i].raw_value = 0;
     tch[i].ref_value = refval;
+    sensor_values[i] = 0;
   }
-
-  debug_setup_end();
+  sensor_adjust_counter = 0;
 }
 /*----------------------------------------------------------------------------*/
 //     loop
 /*----------------------------------------------------------------------------*/
 void loop() {
   debug_loop_counter++;
-  check_usb_status(); debug_pt(100);
+  check_usb_status();
 
   //  Global Timer 
   long difftm = generateTimer();
@@ -132,47 +136,46 @@ void loop() {
   }
 
   // read any new MIDI messages
-  MIDI.read();  debug_pt(200);
+  MIDI.read();
   if (gt.timer10msecEvent()) {
-    int sv[MAX_SENS] = {0};
     for (int i = 0; i < MAX_SENS; i++) {
-      int sensor_value = get_sensor_values(i);
-      qt.set_value(i, sensor_value);
-      sv[i] = sensor_value;
+      // Read from Core 1
+      qt.set_value(i, sensor_values[i]);
     }
-    debug_pt(210);
     if (stable) {
       qt.seek_and_update_touch_point();
       clear_touch_leds();
       qt.lighten_leds(callback_for_set_led);
     }
-  }  debug_pt(300);
+  }
 
   // Lighten LEDs (NeoPixel)
   set_led_for_wave(gt.globalTime());
   update_neo_pixel();
-  debug_pt(400);
 
   if (gt.timer100msecEvent()) {
-    // Update sensor ref values
-    read_ref_sensor_values(sensor_adjust_counter);
-    sensor_adjust_counter++;
-    if (sensor_adjust_counter >= MAX_SENS) {
-      sensor_adjust_counter = 0;
-    }
-
-    debug_pt(500);
     show_debug_info();
     debug_loop_counter = 0; // Reset debug loop counter
   }
 }
-/*----------------------------------------------------------------------------*/
 void check_usb_status() {
   static bool usb_connected = false;
   if (usb_connected) {return;}
   if (TinyUSBDevice.mounted()) {
     usb_connected = true;
     Serial.println("USB connected");
+  }
+}
+void loop1() {
+  for (int i = 0; i < MAX_SENS; i++) {
+    sensor_values[i] = get_sensor_values(i);
+  }
+
+  // Update sensor ref values
+  read_ref_sensor_values(sensor_adjust_counter);
+  sensor_adjust_counter++;
+  if (sensor_adjust_counter >= MAX_SENS) {
+    sensor_adjust_counter = 0;
   }
 }
 /*----------------------------------------------------------------------------*/
