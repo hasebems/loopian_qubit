@@ -35,7 +35,7 @@ Adafruit_USBD_MIDI usb_midi;
 MIDI_CREATE_INSTANCE(Adafruit_USBD_MIDI, usb_midi, MIDI);
 
 // Create a neopixel object
-SK6812 sk(MAX_SENS, 26);
+SK6812 sk(MAX_LIGHT, 26);
 
 // Init RPI_PICO_Timer
 RPI_PICO_Timer ITimer1(1);
@@ -49,15 +49,36 @@ struct OneTouch {
 OneTouch tch[MAX_SENS];
 char text_display[7][16];
 int sensor_adjust_counter;
-QubitTouch qt([](uint8_t pad_num, uint8_t value, uint8_t intensity) {
+QubitTouch qt([](uint8_t status, uint8_t note, uint8_t intensity) {
   // MIDI callback function
-  sendMidiMessage((value > 0) ? 0x90 : 0x80, pad_num, intensity);
+  sendMidiMessage(status, note, intensity);
 });
 
 /*----------------------------------------------------------------------------*/
 //     setup
 /*----------------------------------------------------------------------------*/
 void setup() {
+  Serial.begin(115200);
+
+  // Device Discriptor
+  TinyUSBDevice.setManufacturerDescriptor("Kigakudoh");
+  TinyUSBDevice.setProductDescriptor("Loopian::QUBIT");
+  // MIDI Port Name
+  usb_midi.setStringDescriptor("Loopian::QUBIT MIDI");
+
+  // initialize USB MIDI
+  usb_midi.begin();
+  MIDI.begin(MIDI_CHANNEL_OMNI);
+
+  // MIDI Callbacks
+  MIDI.turnThruOff();
+  MIDI.setHandleNoteOn(handleNoteOn);
+  MIDI.setHandleNoteOff(handleNoteOff);
+  MIDI.setHandleProgramChange(handleProgramChange);
+
+  // wait until device mounted : 挿さないと起動しなくなるので削除
+  //while( !TinyUSBDevice.mounted() ) delay(1);
+
   // GPIO  
   pinMode(LED_BLUE, OUTPUT);
   pinMode(LED_GREEN, OUTPUT);
@@ -67,17 +88,6 @@ void setup() {
   gpio_put(LED_RED, HIGH);
 
   SSD1331_init();
-
-  //TinyUSB_Device_Init(0);
-  //MIDI.setHandleNoteOn(handleNoteOn);
-  //MIDI.setHandleNoteOff(handleNoteOff);
-  //MIDI.setHandleProgramChange(handleProgramChange);
-  //usb_midi.setStringDescriptor("TinyUSB MIDI");
-  //MIDI.begin(MIDI_CHANNEL_OMNI);
-  //MIDI.turnThruOff();
-
-  // wait until device mounted
-  //while( !TinyUSBDevice.mounted() ) delay(1);
 
   // I2C
   wireBegin();
@@ -100,14 +110,20 @@ void setup() {
     tch[i].raw_value = 0;
     tch[i].ref_value = refval;
   }
+
+  Serial.println("Loopian::QUBIT started");
 }
 /*----------------------------------------------------------------------------*/
 //     loop
 /*----------------------------------------------------------------------------*/
 void loop() {
+  check_usb_status();
+
   //  Global Timer 
   long difftm = generateTimer();
   int cnt = gt.timer100ms()%10;
+  bool stable = gt.timer1s() > 5;
+  // Heartbeat LED
   if (cnt<5){
     gpio_put(LED_BLUE, LOW);
   }
@@ -116,7 +132,7 @@ void loop() {
   }
 
   // read any new MIDI messages
-  //MIDI.read();
+  MIDI.read();
   if (gt.timer10msecEvent()) {
     int sv[MAX_SENS] = {0};
     for (int i = 0; i < MAX_SENS; i++) {
@@ -127,8 +143,11 @@ void loop() {
     show_one_line(0, sv[0], sv[1]);
     show_one_line(1, sv[2], sv[3]);
     show_one_line(2, sv[4], sv[5]);
-    qt.seek_and_update_touch_point();
-    qt.lighten_leds(set_led_for_touch);
+    if (stable) {
+      qt.seek_and_update_touch_point();
+      clear_touch_leds();
+      qt.lighten_leds(callback_for_set_led);
+    }
   }
 
   // Lighten LEDs (NeoPixel)
@@ -147,16 +166,26 @@ void loop() {
   }
 }
 /*----------------------------------------------------------------------------*/
+void check_usb_status() {
+  static bool usb_connected = false;
+  if (usb_connected) {return;}
+  if (TinyUSBDevice.mounted()) {
+    usb_connected = true;
+    Serial.println("USB connected");
+  }
+}
+/*----------------------------------------------------------------------------*/
 //     Read AT42QT1070 raw/ref values
+//      num: 0-15 (which AT42QT1070 to read from)
+//      sens: 0-5 (which sensor to read from, 0-5)
+//      ref: true for reference value, false for raw value
+//      returns: tuple of error code and raw value
 /*----------------------------------------------------------------------------*/
 std::tuple<int, uint16_t> read_from_AT42QT(int num, int sens, bool ref) {
-  static int old_num = -1;
   uint8_t raw[2];
-  if (num != old_num) {
-    int real_num = 15 - num;
-    pca9544_changeI2cBus(real_num%4, real_num/4);
-    old_num = num;
-  }
+  constexpr uint8_t CONVERT_TO_DEV_NUM[4] = {2, 3, 1, 0};// {3,2,1,0}
+  constexpr uint8_t OFFSET_I2C_ADRS[4] = {0x04, 0x05, 0x06, 0x07}; // {0,1,2,3}
+  pca9544_changeI2cBus(CONVERT_TO_DEV_NUM[num % 4], OFFSET_I2C_ADRS[num / 4]);
   int err = AT42QT_read(sens, raw, ref);
   uint16_t rawval = static_cast<uint16_t>(raw[0]) * 256 + raw[1];
   return {err, rawval};
@@ -207,16 +236,20 @@ void sendMidiMessage(uint8_t status, uint8_t note, uint8_t velocity) {
   uint8_t channel = (status & 0x0F) + 1;
   switch(status & 0xF0) {
       case 0x90: // Note On
+          Serial.println("USB MIDI: Note On");
+          Serial.println(note);
           MIDI.sendNoteOn(note, velocity, channel);
           break;
       case 0x80: // Note Off
+          Serial.println("USB MIDI: Note Off");
+          Serial.println(note);
           MIDI.sendNoteOff(note, velocity, channel);
           break;
       case 0xB0: // Control Change
-          MIDI.sendControlChange(note, velocity, channel);
+          //MIDI.sendControlChange(note, velocity, channel);
           break;
       case 0xC0: // Program Change
-          MIDI.sendProgramChange(note, channel);
+          //MIDI.sendProgramChange(note, channel);
           break;
       default:
           break;
@@ -278,11 +311,11 @@ void show_debug_info() {
 /*----------------------------------------------------------------------------*/
 //     NeoPixel
 /*----------------------------------------------------------------------------*/
-uint8_t neo_pixel[MAX_SENS][4];
+uint8_t neo_pixel[MAX_LIGHT][4];
 void init_neo_pixel() {
   // Set up the sk6812
   sk.begin();
-  for (int i = 0; i < MAX_SENS; i++) {
+  for (int i = 0; i < MAX_LIGHT; i++) {
     neo_pixel[i][0] = 0; // red
     neo_pixel[i][1] = 0; // green
     neo_pixel[i][2] = 0; // blue
@@ -291,25 +324,20 @@ void init_neo_pixel() {
   update_neo_pixel();
 }
 void clear_touch_leds() {
-    for (int i = 0; i < MAX_SENS; i++) {
-    neo_pixel[i][0] = 0; // red
-    neo_pixel[i][1] = 0; // green
-    neo_pixel[i][2] = 0; // blue
+    for (int i = 0; i < MAX_LIGHT; i++) {
+      neo_pixel[i][0] = 0; // red
+      neo_pixel[i][1] = 0; // green
+      neo_pixel[i][2] = 0; // blue
   }
 }
 //-----------------------------------------------------------
-void set_led_for_touch(float locate, int16_t sensor_value) {
-  if (locate < 0.0f) {
-    clear_touch_leds();
-    return; // Invalid location
-  }
-  if (locate >= static_cast<float>(MAX_SENS)) {
+void callback_for_set_led(float locate, int16_t sensor_value) {
+  if ((locate < 0.0f) || (locate >= static_cast<float>(MAX_SENS))){
     return; // Invalid location
   }
   if (sensor_value <= 1) {
     sensor_value = 1;
   }
-  clear_touch_leds();
 
   const float SLOPE = 20000.0f / sensor_value; // 傾き:小さいほどたくさん光る
   float nearest_lower = std::floor(locate);
@@ -318,18 +346,18 @@ void set_led_for_touch(float locate, int16_t sensor_value) {
   while (1) {
     int16_t this_val = static_cast<int16_t>(255 - (locate - nearest_lower)*SLOPE);
     if (this_val < 0) {break;}
-    set_touch_led(static_cast<int>(nearest_lower), this_val);
+    set_led_for_touch(static_cast<int>(nearest_lower), this_val);
     nearest_lower -= 1.0f;
   }
   while (1) {
     int16_t this_val = static_cast<int16_t>(255 - (nearest_upper - locate)*SLOPE);
     if (this_val < 0) {break;}
-    set_touch_led(static_cast<int>(nearest_upper), this_val);
+    set_led_for_touch(static_cast<int>(nearest_upper), this_val);
     nearest_upper += 1.0f;
   }
 }
 //-----------------------------------------------------------
-void set_touch_led(int index, uint8_t intensity) {
+void set_led_for_touch(int index, uint8_t intensity) {
   uint8_t red = (intensity * 4) / 5;
   uint8_t blue = (intensity * 1) / 5;
   set_neo_pixel(index, red, 0, blue, -1); // Set only red and blue channels
@@ -350,9 +378,9 @@ void set_white_led(int index, uint8_t intensity) {
 //-----------------------------------------------------------
 void set_neo_pixel(int index, int16_t red, int16_t green, int16_t blue, int16_t white) {
   while (index < 0) {
-    index += MAX_SENS; // Wrap around if negative
+    index += MAX_LIGHT; // Wrap around if negative
   }
-  index %= MAX_SENS;
+  index %= MAX_LIGHT;
   if (red != -1)    {neo_pixel[index][0] = static_cast<uint8_t>(red);}
   if (green != -1)  {neo_pixel[index][1] = static_cast<uint8_t>(green);}
   if (blue != -1)   {neo_pixel[index][2] = static_cast<uint8_t>(blue);}
@@ -360,7 +388,7 @@ void set_neo_pixel(int index, int16_t red, int16_t green, int16_t blue, int16_t 
 }
 void update_neo_pixel() {
   sk.clear();
-  for (int i = 0; i < MAX_SENS; i++) {
+  for (int i = 0; i < MAX_LIGHT; i++) {
     sk.setPixelColor(i, neo_pixel[i][0], neo_pixel[i][1], neo_pixel[i][2], neo_pixel[i][3]);
   }
   sk.show();

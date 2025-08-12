@@ -11,13 +11,19 @@
 #include <vector>
 #include <functional>
 #include <algorithm>
+#include <cmath>
 
 #include "constants.h"
 
+// =========================================================
+//      Touch Constants
+// =========================================================
 constexpr uint16_t MAX_PADS = MAX_SENS;
-constexpr uint16_t TOUCH_THRESHOLD = 10; // Example threshold for touch point detection
+constexpr uint16_t TOUCH_THRESHOLD = 20; // Example threshold for touch point detection
 constexpr float CLOSE_RANGE = 3.0f; // 同じタッチと見做される 10msec あたりの動作範囲
 constexpr size_t FINGER_RANGE = 3; // Maximum number of touch points
+constexpr float HISTERESIS = 0.7f; // Hysteresis value for touch point detection
+
 
 // =========================================================
 //      Pad Class
@@ -71,8 +77,12 @@ public:
 // =========================================================
 // センサーの生値から、実際にどのあたりをタッチしているかを判断し、保持する
 class TouchPoint {
+    static constexpr uint8_t NEW_NOTE = 0xff;
+    static constexpr uint8_t TOUCH_POINT_ERROR = 0xfe;
+
     float       center_location_;
     int16_t     intensity_;
+    uint8_t     real_crnt_note_; // MIDI Note number
     bool        is_updated_;
     bool        is_touched_;
     std::function<void(uint8_t, uint8_t, uint8_t)> midi_callback_; // MIDI callback function
@@ -81,26 +91,33 @@ class TouchPoint {
 public:
     static constexpr float INIT_VAL = 100.0f;
 
-    // Constructor は起動時に最大数分呼ばれる
+    /// Constructor は起動時に最大数分呼ばれる
     TouchPoint() :
         center_location_(INIT_VAL), // Invalid location initially
         intensity_(0),
+        real_crnt_note_(0), // Initialize to 0, will be set when a touch is detected
         is_updated_(false),
         is_touched_(false),
         midi_callback_(nullptr) {}
 
+    /// 新しいタッチポイントを作成する
     void new_touch(float location, int16_t intensity, std::function<void(uint8_t, uint8_t, uint8_t)> callback) {
+        uint8_t crnt_note = new_locattion(NEW_NOTE, location);
+        if (crnt_note == TOUCH_POINT_ERROR) {
+            return;
+        }
         center_location_ = location;
+        real_crnt_note_ = crnt_note; // Set the current note
         intensity_ = intensity;
         is_updated_ = true;
         is_touched_ = true;
         midi_callback_ = callback;
         // MIDI Note On
         if (callback) {
-            callback(0x90, center_location_, intensity_); // Example MIDI Note On message
+            callback(0x90, real_crnt_note_ + 0x24, intensity_to_velocity(intensity_)); // Example MIDI Note On message
         }
     }
-
+    /// タッチポイントが近いかどうかを判断する
     auto is_near_here(float location) const -> bool {
         if (!is_touched_) { return false;}
         if ((center_location_ >= location - CLOSE_RANGE) && (center_location_ <= location + CLOSE_RANGE)) {
@@ -108,48 +125,80 @@ public:
         }
         return false;
     }
-
+    /// タッチポイントを更新する
     void update_touch(float location, uint16_t intensity) {
-        float previous_location = center_location_;
         center_location_ = location;
         intensity_ = intensity;
         is_updated_ = true;
         is_touched_ = true;
+        uint8_t updated_note = new_locattion(real_crnt_note_, location);
+        if (updated_note == TOUCH_POINT_ERROR) {
+            return;
+        }
         // MIDI Note On & Off
-        if (midi_callback_) {
-            midi_callback_(0x90, static_cast<uint8_t>(center_location_), intensity_);
-            midi_callback_(0x80, static_cast<uint8_t>(previous_location), 0x40);
+        if ((midi_callback_) && (updated_note != real_crnt_note_)) {
+            midi_callback_(0x90, updated_note + 0x24, intensity_to_velocity(intensity_));
+            midi_callback_(0x80, real_crnt_note_ + 0x24, 0x40);
+            real_crnt_note_ = updated_note; // Update the current note
         }
     }
-
-    auto is_touched() const -> bool {
-        return is_touched_;
-    }
-
-    auto is_updated() const -> bool {
-        return is_updated_;
-    }
-
-    auto get_location() const -> float {
-        return center_location_;
-    }
-
-    auto get_intensity() const -> int16_t {
-        return intensity_;
-    }
-
-    void clear_updated_flag() {
-        is_updated_ = false;
-    }
-
+    /// タッチポイントが離れたときの処理
     void released() {
         // MIDI Note Off
         if (midi_callback_) {
-            midi_callback_(0x80, static_cast<uint8_t>(center_location_), 0x40);
+            midi_callback_(0x80, real_crnt_note_ + 0x24, 0x40);
         }
         is_touched_ = false;
         center_location_ = INIT_VAL;
         intensity_ = 0;
+    }
+    auto is_touched() const -> bool {
+        return is_touched_;
+    }
+    auto is_updated() const -> bool {
+        return is_updated_;
+    }
+    auto get_location() const -> float {
+        return center_location_;
+    }
+    auto get_intensity() const -> int16_t {
+        return intensity_;
+    }
+    void clear_updated_flag() {
+        is_updated_ = false;
+    }
+
+private:
+    /// crnt_note : 0-(MAX_SENS-1) 現在の位置、NEW_NOTE は新規ノート
+    auto new_locattion(uint8_t crnt_note, float location) -> uint8_t {
+        if (location < 0.0f) {
+            location = 0.0f; // Ensure location is non-negative
+        } else if (location >= static_cast<float>(MAX_SENS - 1)) {
+            location = static_cast<float>(MAX_SENS - 1); // Ensure location is within bounds
+        }
+        if (crnt_note == NEW_NOTE) {
+            return static_cast<uint8_t>(std::round(location)); // Round to nearest integer for MIDI note
+        } else if (crnt_note < MAX_SENS) {
+            if ((location > static_cast<float>(crnt_note) + HISTERESIS) ||
+                (location < static_cast<float>(crnt_note) - HISTERESIS)) {
+                // histeresis
+                return static_cast<uint8_t>(std::round(location));
+            } else {
+                return crnt_note; // No change in note
+            }
+        } else {
+            // Invalid note number, return TOUCH_POINT_ERROR
+            return TOUCH_POINT_ERROR;
+        }
+    }
+    auto intensity_to_velocity(int16_t intensity) const -> uint8_t {
+        // Convert intensity to MIDI velocity (0-127)
+        if (intensity < 0) {
+            return 0; // No touch
+        } else if (intensity > 127) {
+            return 127; // Max MIDI velocity
+        }
+        return static_cast<uint8_t>(intensity);
     }
 };
 
@@ -177,27 +226,22 @@ public:
     auto deb_val() const -> int16_t {
         return debug;
     }
-
-    // パッドの値を設定する
+    /// パッドの値を設定する
     void set_value(size_t pad_num, uint16_t value) {
         pads_[pad_num].set_crnt(value);
     }
-
     /// タッチポイントの数を取得する
     auto get_touch_count() const -> size_t {
         return touch_count_;
     }
-
     /// タッチポイントの参照を取得する（非const版）
     auto get_touch_point(size_t index) -> TouchPoint& {
         return touch_points_[index];
     }
-
     /// タッチポイントのconst参照を取得する（const版）
     auto touch_point(size_t index) const -> const TouchPoint& {
         return touch_points_[index];
     }
-
     /// 指定されたパッドの参照を取得する(マイナス値からMAX_PADSを超えた値を考慮)
     auto proper_pad(int pad_num) -> Pad& {
         while (pad_num < 0) {
@@ -206,7 +250,6 @@ public:
         size_t index = static_cast<size_t>(pad_num);
         return pads_[(pad_num + MAX_PADS) % MAX_PADS]; // Wrap around to ensure valid index
     }
-
     /// 差分の符号が変化した時、その位置の値がある一定の値以上なら、そこをタッチポイントとする
     void seek_and_update_touch_point() {
         std::array<std::tuple<size_t, float, int16_t>, MAX_TOUCH_POINTS> temp_touch_point;
@@ -274,7 +317,6 @@ public:
         // 更新のなかったタッチポイントを削除する
         erase_touch_point();
     }
-
     /// LEDを点灯させるためのコールバック関数をコールする
     void lighten_leds(std::function<void(float, int16_t)> led_callback) {
         bool empty = true;
@@ -293,7 +335,7 @@ public:
     }
 
 private:
-    void new_touch_point(uint16_t location, uint16_t intensity, std::function<void(uint8_t, uint8_t, uint8_t)> callback) {
+    void new_touch_point(float location, uint16_t intensity, std::function<void(uint8_t, uint8_t, uint8_t)> callback) {
         for (auto& tp : touch_points_) {
             if (!tp.is_touched()) {
                 tp.new_touch(location, intensity, callback);
@@ -303,7 +345,7 @@ private:
     }
     void erase_touch_point() {
         for (auto& tp : touch_points_) {
-            if (!tp.is_updated()) {
+            if (!tp.is_updated() && tp.is_touched()) {
                 tp.released();
             } else {
                 tp.clear_updated_flag(); // Clear the updated flag for the next cycle
