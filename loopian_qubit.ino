@@ -187,8 +187,8 @@ void loop1() {
 /*----------------------------------------------------------------------------*/
 std::tuple<int, uint16_t> read_from_AT42QT(int num, int sens, bool ref) {
   uint8_t raw[2];
-  constexpr uint8_t CONVERT_TO_DEV_NUM[4] = {2, 3, 1, 0};// {3,2,1,0}
-  constexpr uint8_t OFFSET_I2C_ADRS[4] = {0x04, 0x05, 0x06, 0x07}; // {0,1,2,3}
+  constexpr uint8_t CONVERT_TO_DEV_NUM[4] = {3, 2, 1, 0};
+  constexpr uint8_t OFFSET_I2C_ADRS[4] = {0x00, 0x01, 0x02, 0x03};
   pca9544_changeI2cBus(CONVERT_TO_DEV_NUM[num % 4], OFFSET_I2C_ADRS[num / 4]);
   int err = AT42QT_read(sens, raw, ref);
   uint16_t rawval = static_cast<uint16_t>(raw[0]) * 256 + raw[1];
