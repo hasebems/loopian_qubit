@@ -154,7 +154,11 @@ void loop() {
   update_neo_pixel();
 
   if (gt.timer100msecEvent()) {
+#ifdef TEST_MODE
+    show_one_kamaboko(0);
+#else
     show_debug_info();
+#endif
     debug_loop_counter = 0; // Reset debug loop counter
   }
 }
@@ -258,6 +262,13 @@ void sendMidiMessage(uint8_t status, uint8_t note, uint8_t velocity) {
 /*----------------------------------------------------------------------------*/
 //     Display for SSD1331
 /*----------------------------------------------------------------------------*/
+void show_one_kamaboko(int kamaboko) {
+  for (int i = 0; i < 3; i++) {
+    uint16_t value1 = qt.get_value(kamaboko + i * 2);
+    uint16_t value2 = qt.get_value(kamaboko + i * 2 + 1);
+    show_one_line(i, value1, value2);
+  }
+}
 void show_one_line(int line, int value1, int value2) {
     if (line < 0 || line >= 3) {
         return; // Invalid line number

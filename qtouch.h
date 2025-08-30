@@ -243,6 +243,10 @@ public:
     void set_value(size_t pad_num, uint16_t value) {
         pads_[pad_num].set_crnt(value);
     }
+    /// パッドの値を取得する
+    auto get_value(size_t pad_num) -> uint16_t const {
+        return pads_[pad_num].get_crnt();
+    }
     /// タッチポイントの数を取得する
     auto get_touch_count() const -> size_t {
         return touch_count_;
