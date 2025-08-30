@@ -1122,15 +1122,24 @@ int PCA9685_setFullColorLED( uint8_t chipNumber, int ledNum, unsigned short* col
 //		<< PCA9544A >>
 //---------------------------------------------------------
 static const unsigned char PCA9544A_I2C_ADRS = 0x70;
+static uint8_t old_dev_num = 0;
 //-------------------------------------------------------------------------
 //			PCA9544A ( I2C Multiplexer : I2c Device)
+//        i2c_num:  0..3 (which I2C bus to use)
+//        dev_num:  0..7 (which device to select)
 //-------------------------------------------------------------------------
 int pca9544_changeI2cBus(int i2c_num, int dev_num)
 {
-	uint8_t	i2cBuf = 0x04 | static_cast<uint8_t>(i2c_num&0x0003);
+  uint8_t sub_i2c_num = i2c_num & 0x0003;
+  if (dev_num != old_dev_num) { // 前回と違うデバイスなら、前のデバイスは接続を切る
+    uint8_t stop_cnct = 0x00;
+    uint8_t old_adrs = PCA9544A_I2C_ADRS + static_cast<uint8_t>(old_dev_num);
+    int err0 = write_i2cDevice(old_adrs, &stop_cnct, 1);
+    old_dev_num = dev_num;
+  }
+	uint8_t	i2cBuf = 0x04 | static_cast<uint8_t>(sub_i2c_num);
   uint8_t i2cadrs = PCA9544A_I2C_ADRS + static_cast<uint8_t>(dev_num);
-	int		err = 0;
-	err = write_i2cDevice(i2cadrs, &i2cBuf, 1);
+  int err = write_i2cDevice(i2cadrs, &i2cBuf, 1);
 	return err;
 }
 #endif
