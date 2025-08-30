@@ -14,19 +14,6 @@
 void wireBegin( void );
 void initHardware( void );
 
-// USE_CY8CMBR3110
-  void MBR3110_resetAll(int maxdevNum);
-  int MBR3110_init( int number=0 );
-  int MBR3110_originalAdrsExist(void);
-  int MBR3110_setup( int number=0 );
-  int MBR3110_readData( unsigned char cmd, unsigned char* data, int length, unsigned char i2cAdrs );
-  int MBR3110_selfTest( unsigned char* result, int number );
-  void MBR3110_changeSensitivity( unsigned char data, int number=0 );
-  int MBR3110_readTouchSw( unsigned char* touchSw, int number=0 );
-  int MBR3110_checkWriteConfig( unsigned char checksumL, unsigned char checksumH, unsigned char crntI2cAdrs );
-  int MBR3110_writeConfig( int number, unsigned char crntI2cAdrs );
-  int mbr3110_read_rawdata( unsigned int number, unsigned char (&read_data)[2] );
-
 // AT42QT
 void AT42QT_init( void );
 int AT42QT_read( size_t key, uint8_t (&rdraw)[2], bool ref );
@@ -49,6 +36,7 @@ int AT42QT_read( size_t key, uint8_t (&rdraw)[2], bool ref );
   int PCA9685_write( uint8_t chipNumber, uint8_t cmd1, uint8_t cmd2 );
 	int PCA9685_setFullColorLED( uint8_t chipNumber, int ledNum, unsigned short* color  );
 
+// USE_SSD1331
   void SSD1331_init(void);
   void SSD1331_display(const char* str, int line);
 
