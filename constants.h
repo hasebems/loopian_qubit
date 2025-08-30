@@ -17,7 +17,7 @@ constexpr int CUBIT_VERSION = 0;
 #ifdef TEST_MODE
 constexpr int MAX_KAMABOKO_NUM = 1;
 #else
-constexpr int MAX_KAMABOKO_NUM = 4;
+constexpr int MAX_KAMABOKO_NUM = 8;
 #endif
 
 constexpr int MAX_EACH_SENS = 6;
