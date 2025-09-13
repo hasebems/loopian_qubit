@@ -37,6 +37,8 @@ MIDI_CREATE_INSTANCE(Adafruit_USBD_MIDI, usb_midi, MIDI);
 
 // Create a neopixel object
 SK6812 sk(MAX_LIGHT, D0);
+uint8_t external_note_status[MAX_MIDI_NOTE] = {0};
+int external_note_count = 0;
 
 // Init RPI_PICO_Timer
 RPI_PICO_Timer ITimer1(1);
@@ -151,6 +153,7 @@ void loop() {
       qt.seek_and_update_touch_point();
       clear_touch_leds();
       qt.lighten_leds(callback_for_set_led);
+      set_led_by_accompaniment();
     }
   }
 
@@ -240,8 +243,16 @@ long generateTimer( void )
 //     MIDI/Other Hardware
 /*----------------------------------------------------------------------------*/
 void handleNoteOn(byte channel, byte pitch, byte velocity) {
+  if (channel == 16) {
+    external_note_status[pitch] = velocity;
+    external_note_count++;
+  }
 }
 void handleNoteOff(byte channel, byte pitch, byte velocity) {
+  if (channel == 16) {
+    external_note_status[pitch] = 0;
+    external_note_count--;
+  }
 }
 void handleProgramChange(byte channel , byte number) {
 }
@@ -327,6 +338,8 @@ void show_debug_info() {
 //     NeoPixel
 /*----------------------------------------------------------------------------*/
 uint8_t neo_pixel[MAX_LIGHT][4];
+enum LED_STATUS { NO_STATUS, TOUCH_STATUS, ACCOMPANIMENT_STATUS };
+LED_STATUS led_status[MAX_LIGHT] = { NO_STATUS }; // Status of each sensor for LED control
 void init_neo_pixel() {
   // Set up the sk6812
   sk.begin();
@@ -343,10 +356,26 @@ void clear_touch_leds() {
       neo_pixel[i][0] = 0; // red
       neo_pixel[i][1] = 0; // green
       neo_pixel[i][2] = 0; // blue
+      led_status[i] = NO_STATUS;
   }
 }
 //-----------------------------------------------------------
 void callback_for_set_led(float locate, int16_t sensor_value) {
+  set_led_by_touch(locate, sensor_value, true);
+}
+void set_led_by_accompaniment() {
+  if (external_note_count <= 0) {
+    return; // No external notes to process
+  }
+  for (int i = 0; i < MAX_SENS; i++) {
+    int idx = i + KEYBD_LO - 4;
+    if (external_note_status[idx] > 0) {
+      set_led_by_touch(idx, external_note_status[idx], false);
+    }
+  }
+}
+//-----------------------------------------------------------
+void set_led_by_touch(float locate, int16_t sensor_value, bool touch) {
   if ((locate < 0.0f) || (locate >= static_cast<float>(MAX_SENS))){
     return; // Invalid location
   }
@@ -361,21 +390,44 @@ void callback_for_set_led(float locate, int16_t sensor_value) {
   while (1) {
     int16_t this_val = static_cast<int16_t>(255 - (locate - nearest_lower)*SLOPE);
     if (this_val < 0) {break;}
-    set_led_for_touch(static_cast<int>(nearest_lower), this_val);
+    int index = static_cast<int>(nearest_lower);
+    if (led_status[index%MAX_LIGHT] == TOUCH_STATUS && !touch) {
+      // すでにタッチセンサで点灯している場合、伴奏で消さない
+      nearest_lower -= 1.0f;
+      continue;
+    }
+    set_led_for_note(index, this_val, touch);
     nearest_lower -= 1.0f;
+    led_status[index%MAX_LIGHT] = touch ? TOUCH_STATUS : ACCOMPANIMENT_STATUS;
   }
   while (1) {
     int16_t this_val = static_cast<int16_t>(255 - (nearest_upper - locate)*SLOPE);
     if (this_val < 0) {break;}
-    set_led_for_touch(static_cast<int>(nearest_upper), this_val);
+    int index = static_cast<int>(nearest_upper);
+    if (led_status[index%MAX_LIGHT] == TOUCH_STATUS && !touch) {
+      // すでにタッチセンサで点灯している場合、伴奏で消さない
+      nearest_upper += 1.0f;
+      continue;
+    }
+    set_led_for_note(index, this_val, touch);
     nearest_upper += 1.0f;
+    led_status[index%MAX_LIGHT] = touch ? TOUCH_STATUS : ACCOMPANIMENT_STATUS;
   }
 }
 //-----------------------------------------------------------
-void set_led_for_touch(int index, uint8_t intensity) {
-  uint8_t red = (intensity * 4) / 5;
-  uint8_t blue = (intensity * 1) / 5;
-  set_neo_pixel(index, red, 0, blue, -1); // Set only red and blue channels
+void set_led_for_note(size_t index, uint8_t intensity, bool touch) {
+  uint8_t red = 0;
+  uint8_t blue = 0;
+  uint8_t green = 0;
+
+  if (touch) {
+    red = (intensity * 4) / 5;
+    blue = (intensity * 1) / 5;
+  } else {
+    red = (intensity * 4) / 5;
+    green = (intensity * 1) / 5;
+  }
+  set_neo_pixel(index, red, green, blue, -1); // Set only red and blue channels
 }
 //-----------------------------------------------------------
 void set_led_for_wave(uint16_t global_time) {

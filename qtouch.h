@@ -91,7 +91,7 @@ class TouchPoint {
 // impl TouchPoint
 public:
     static constexpr float INIT_VAL = 100.0f;
-    static constexpr uint8_t OFFSET_NOTE = 0x18;
+    static constexpr uint8_t OFFSET_NOTE = KEYBD_LO - 4;
 
     /// Constructor は起動時に最大数分呼ばれる
     TouchPoint() :
@@ -118,8 +118,8 @@ public:
         touching_time_ = 0; // Reset the touching time
         midi_callback_ = callback;
         // MIDI Note On
-        if (callback) {
-            callback(0x90, real_crnt_note_ + OFFSET_NOTE, intensity_to_velocity(intensity_));
+        if (midi_callback_) {
+            midi_callback_(0x9c, real_crnt_note_ + OFFSET_NOTE, intensity_to_velocity(intensity_));
         }
     }
     /// タッチポイントが近いかどうかを判断する
@@ -142,8 +142,8 @@ public:
         }
         // MIDI Note On & Off
         if ((midi_callback_) && (updated_note != real_crnt_note_)) {
-            midi_callback_(0x90, updated_note + OFFSET_NOTE, intensity_to_velocity(intensity_));
-            midi_callback_(0x80, real_crnt_note_ + OFFSET_NOTE, 0x40);
+            midi_callback_(0x9c, updated_note + OFFSET_NOTE, intensity_to_velocity(intensity_));
+            midi_callback_(0x8c, real_crnt_note_ + OFFSET_NOTE, 0x40);
             real_crnt_note_ = updated_note; // Update the current note
         }
     }
@@ -156,7 +156,7 @@ public:
         }
         // MIDI Note Off
         if (midi_callback_) {
-            midi_callback_(0x80, real_crnt_note_ + OFFSET_NOTE, 0x40);
+            midi_callback_(0x8c, real_crnt_note_ + OFFSET_NOTE, 0x40);
         }
         is_touched_ = false;
         center_location_ = INIT_VAL;
