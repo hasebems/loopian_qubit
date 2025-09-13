@@ -20,10 +20,10 @@
 /*----------------------------------------------------------------------------*/
 //     Constants
 /*----------------------------------------------------------------------------*/
-#define LED_BLUE      25    // LED
-#define LED_GREEN     16    // LED
-#define LED_RED       17    // LED
-#define POWER_PIN     23    //NeoPixelの電源
+#define LED_HEARTBEAT   25    // LED RP2040: blue, RP2350: orange
+//#define LED_GREEN       16    // LED RP2040: green, RP2350: not connected（基板裏）
+//#define LED_RED         17    // LED RP2040: red, RP2350: not connected（基板裏）
+#define BOARD_NEO_POWER 23    // XIAO 上の NeoPixelの電源
 
 /*----------------------------------------------------------------------------*/
 //     Variables
@@ -36,7 +36,7 @@ Adafruit_USBD_MIDI usb_midi;
 MIDI_CREATE_INSTANCE(Adafruit_USBD_MIDI, usb_midi, MIDI);
 
 // Create a neopixel object
-SK6812 sk(MAX_LIGHT, 26);
+SK6812 sk(MAX_LIGHT, D0);
 
 // Init RPI_PICO_Timer
 RPI_PICO_Timer ITimer1(1);
@@ -82,18 +82,23 @@ void setup() {
   //while( !TinyUSBDevice.mounted() ) delay(1);
 
   // GPIO  
-  pinMode(LED_BLUE, OUTPUT);
+  pinMode(LED_HEARTBEAT, OUTPUT);
+  gpio_put(LED_HEARTBEAT, HIGH);
+#ifdef LED_GREEN
   pinMode(LED_GREEN, OUTPUT);
-  pinMode(LED_RED, OUTPUT);
-  gpio_put(LED_BLUE, HIGH);
   gpio_put(LED_GREEN, HIGH);
+#endif
+#ifdef LED_RED
+  pinMode(LED_RED, OUTPUT);
   gpio_put(LED_RED, HIGH);
-
+#endif
   SSD1331_init();
 
   // Interval in unsigned long microseconds
   if (!ITimer1.attachInterruptInterval(2000, TimerHandler)) { // 2ms
+#ifdef LED_RED
     gpio_put(LED_RED, LOW);
+#endif
     assert(false); // Timer initialization failed
   }
 
@@ -129,10 +134,10 @@ void loop() {
   bool stable = gt.timer1s() > 3; // 3 seconds after start
   // Heartbeat LED
   if (cnt<5){
-    gpio_put(LED_BLUE, LOW);
+    gpio_put(LED_HEARTBEAT, LOW);
   }
   else {
-    gpio_put(LED_BLUE, HIGH);
+    gpio_put(LED_HEARTBEAT, HIGH);
   }
 
   // read any new MIDI messages
