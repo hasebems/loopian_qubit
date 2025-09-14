@@ -37,7 +37,19 @@ int AT42QT_read( size_t key, uint8_t (&rdraw)[2], bool ref );
 	int PCA9685_setFullColorLED( uint8_t chipNumber, int ledNum, unsigned short* color  );
 
 // USE_SSD1331
+  // Color definitions
+  enum class SSD1331_COLORS {
+      BLACK      = 0x0000,
+      BLUE       = 0x001F,
+      RED        = 0xF800,
+      GREEN      = 0x07E0,
+      CYAN       = 0x07FF,
+      MAGENTA    = 0xF81F,
+      YELLOW     = 0xFFE0,
+      WHITE      = 0xFFFF
+  };
   void SSD1331_init(void);
-  void SSD1331_display(const char* str, int line);
+  void SSD1331_clear(void);
+  void SSD1331_display(const char* str, int line, SSD1331_COLORS color);
 
 #endif

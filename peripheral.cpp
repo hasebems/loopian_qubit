@@ -576,16 +576,6 @@ int pca9544_changeI2cBus(int i2c_num, int dev_num)
 // JPGの最大サイズ(バッファを静的に確保するようにしているため、決め打ち。取り扱う最大ファイルサイズで変えるようにする)
 #define JPG_SIZE_MAX (20 * 1024) //MAX 20KByteを想定
 
-// Color definitions
-#define	BLACK           0x0000
-#define	BLUE            0x001F
-#define	RED             0xF800
-#define	GREEN           0x07E0
-#define CYAN            0x07FF
-#define MAGENTA         0xF81F
-#define YELLOW          0xFFE0
-#define WHITE           0xFFFF
-
 Adafruit_SSD1331 display = Adafruit_SSD1331(&SPI, DISPLAY_CS, DISPLAY_DC, DISPLAY_RST);
 
 void SSD1331_init(void) {
@@ -595,13 +585,16 @@ void SSD1331_init(void) {
   
     //displayの初期化と初期設定
     display.begin();       
-    display.fillScreen(BLACK);                      //背景の塗りつぶし
+    display.fillScreen(static_cast<uint16_t>(SSD1331_COLORS::BLACK));                      //背景の塗りつぶし
 }
-void SSD1331_display(const char* str, int line) {
-  display.fillRect(0, 10*line, 100, 10, BLACK);
+void SSD1331_clear(void) {
+    display.fillScreen(static_cast<uint16_t>(SSD1331_COLORS::BLACK));                      //背景の塗りつぶし
+}
+void SSD1331_display(const char* str, int line, SSD1331_COLORS color) {
+  display.fillRect(0, 10*line, 100, 10, static_cast<uint16_t>(SSD1331_COLORS::BLACK));
   // 0° (デフォルト) の向きで描画
   display.setRotation(0);
-  display.setTextColor(WHITE);
+  display.setTextColor(static_cast<uint16_t>(color));
   display.setTextSize(1);
   display.setCursor(0, 10*line);
   display.print(str);

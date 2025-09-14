@@ -24,6 +24,8 @@
 //#define LED_GREEN       16    // LED RP2040: green, RP2350: not connected（基板裏）
 //#define LED_RED         17    // LED RP2040: red, RP2350: not connected（基板裏）
 #define BOARD_NEO_POWER 23    // XIAO 上の NeoPixelの電源
+#define SWITCH_LEFT    D9    // 左のスイッチ
+#define SWITCH_RIGHT   D7     // 右のスイッチ
 
 /*----------------------------------------------------------------------------*/
 //     Variables
@@ -38,7 +40,6 @@ MIDI_CREATE_INSTANCE(Adafruit_USBD_MIDI, usb_midi, MIDI);
 // Create a neopixel object
 SK6812 sk(MAX_LIGHT, D0);
 uint8_t external_note_status[MAX_MIDI_NOTE] = {0};
-int external_note_count = 0;
 
 // Init RPI_PICO_Timer
 RPI_PICO_Timer ITimer1(1);
@@ -50,6 +51,8 @@ QubitTouch qt([](uint8_t status, uint8_t note, uint8_t intensity) {
   sendMidiMessage(status, note, intensity);
 });
 
+bool switch_left_state = false;
+bool switch_right_state = false;
 int debug_loop_counter = 0; // Debug
 /*------------------------------------------------------------------*/
 // Core 1
@@ -84,6 +87,12 @@ void setup() {
   //while( !TinyUSBDevice.mounted() ) delay(1);
 
   // GPIO  
+  gpio_init(SWITCH_LEFT);
+  gpio_set_dir(SWITCH_LEFT, GPIO_IN);
+  gpio_pull_up(SWITCH_LEFT); // 必要ならプルアップ
+  gpio_init(SWITCH_RIGHT);
+  gpio_set_dir(SWITCH_RIGHT, GPIO_IN);
+  gpio_pull_up(SWITCH_RIGHT); // 必要ならプルアップ
   pinMode(LED_HEARTBEAT, OUTPUT);
   gpio_put(LED_HEARTBEAT, HIGH);
 #ifdef LED_GREEN
@@ -107,6 +116,7 @@ void setup() {
   init_neo_pixel();
   debug_setup_end();
 }
+/*------------------------------------------------------------------*/
 void setup1() {
   // I2C
   wireBegin();
@@ -150,16 +160,15 @@ void loop() {
       qt.set_value(i, sensor_values[i]);
     }
     if (stable) {
-      qt.seek_and_update_touch_point();
       clear_touch_leds();
+      qt.seek_and_update_touch_point();
       qt.lighten_leds(callback_for_set_led);
+      // Lighten LEDs (NeoPixel)
       set_led_by_accompaniment();
+      set_led_for_wave(gt.globalTime());
+      update_neo_pixel();
     }
   }
-
-  // Lighten LEDs (NeoPixel)
-  set_led_for_wave(gt.globalTime());
-  update_neo_pixel();
 
   if (gt.timer100msecEvent()) {
 #ifdef TEST_MODE
@@ -178,6 +187,7 @@ void check_usb_status() {
     Serial.println("USB connected");
   }
 }
+/*------------------------------------------------------------------*/
 void loop1() {
   for (int i = 0; i < MAX_SENS; i++) {
     sensor_values[i] = get_sensor_values(i);
@@ -245,13 +255,11 @@ long generateTimer( void )
 void handleNoteOn(byte channel, byte pitch, byte velocity) {
   if (channel == 16) {
     external_note_status[pitch] = velocity;
-    external_note_count++;
   }
 }
 void handleNoteOff(byte channel, byte pitch, byte velocity) {
   if (channel == 16) {
     external_note_status[pitch] = 0;
-    external_note_count--;
   }
 }
 void handleProgramChange(byte channel , byte number) {
@@ -279,60 +287,100 @@ void sendMidiMessage(uint8_t status, uint8_t note, uint8_t velocity) {
 //     Display for SSD1331
 /*----------------------------------------------------------------------------*/
 void show_one_kamaboko(int kamaboko) {
+  SSD1331_display("Loopian::QUBIT", 0, SSD1331_COLORS::MAGENTA);
+  std::string kama = "Block No.: " + std::to_string(kamaboko);
+  SSD1331_display(kama.c_str(), 1, SSD1331_COLORS::CYAN);
   for (int i = 0; i < 3; i++) {
-    uint16_t value1 = qt.get_value(kamaboko + i * 2);
-    uint16_t value2 = qt.get_value(kamaboko + i * 2 + 1);
-    show_one_line(i, value1, value2);
+    uint16_t value1 = qt.get_value(kamaboko * 6 + i * 2);
+    uint16_t value2 = qt.get_value(kamaboko * 6 + i * 2 + 1);
+    show_one_line(i + 2, value1, value2);
   }
 }
 void show_one_line(int line, int value1, int value2) {
-    if (line < 0 || line >= 3) {
-        return; // Invalid line number
-    }
-    char text_display[7][16];
-    std::fill(std::begin(text_display[line]), std::end(text_display[line]), 32);
+    std::string text_display;
     size_t idx = 0;
 
-    for (int i=0; i<8; i++) {
+    for (int i=0; i<7; i++) {
       if (value1 > 4) {
-        text_display[line][idx] = 'o';
+        text_display += 'o';
         idx += 1;
         value1 -= 4;
       } else {
         break;
       }
     }
+    for (int i=idx; i<8; i++) {
+      text_display += ' ';
+    }
     idx = 8;
-    for (int j=0; j<8; j++) {
+    for (int j=0; j<7; j++) {
       if (value2 > 4) {
-        text_display[line][idx] = 'x';
+        text_display += 'x';
         idx += 1;
         value2 -= 4;
       } else {
         break;
       }
     }
-    SSD1331_display(text_display[line], line);
+    SSD1331_display(text_display.c_str(), line, SSD1331_COLORS::WHITE);
+}
+constexpr size_t MAX_PAGE = 17;
+auto page_detect() -> std::tuple<size_t, bool> {
+  static size_t page = 0;
+  bool current_left = gpio_get(SWITCH_LEFT) == LOW;
+  bool current_right = gpio_get(SWITCH_RIGHT) == LOW;
+  bool changed = false;
+  if (current_left && !switch_left_state) {
+    // Left switch pressed / Change to previous page
+    if (page == 0) {
+      page = MAX_PAGE - 1; // Wrap around to last page
+    } else {
+      page -= 1;
+    }
+    changed = true;
+  }
+  if (current_right && !switch_right_state) {
+    // Right switch pressed / Change to next page
+    page += 1;
+    if (page >= MAX_PAGE) {
+      page = 0; // Wrap around to first page
+    }
+    changed = true;
+  }
+  switch_left_state = current_left;
+  switch_right_state = current_right;
+  return std::make_tuple(page, changed);
+}
+void display_page1() {
+  SSD1331_display("Loopian::QUBIT", 0, SSD1331_COLORS::MAGENTA);
+  for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
+    std::string disp_str = std::to_string(i) + "> ";
+    float disp_loc = qt.touch_point(i).get_location();
+    if (disp_loc == TouchPoint::INIT_VAL) {
+      disp_str += " L:---";
+    } else {
+      auto loc = std::ostringstream();
+      loc << std::fixed << std::setprecision(1) << disp_loc;
+      disp_str += " L:" + loc.str();
+    }
+    auto loc2 = std::ostringstream();
+    loc2 << std::fixed << std::setprecision(1) << qt.touch_point(i).get_intensity();
+    disp_str += "/" + loc2.str();
+    SSD1331_display(disp_str.c_str(), i+1, SSD1331_COLORS::WHITE);
+  }
+  std::string loop_info = "LpCntr: " + std::to_string(debug_loop_counter);
+  SSD1331_display(loop_info.c_str(), 5, SSD1331_COLORS::YELLOW);
 }
 void show_debug_info() {
-    SSD1331_display("Loopian::QUBIT", 0);
-    for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
-      std::string disp_str = std::to_string(i) + "> ";
-      float disp_loc = qt.touch_point(i).get_location();
-      if (disp_loc == TouchPoint::INIT_VAL) {
-        disp_str += " L:---";
-      } else {
-        auto loc = std::ostringstream();
-        loc << std::fixed << std::setprecision(1) << disp_loc;
-        disp_str += " L:" + loc.str();
-      }
-      auto loc2 = std::ostringstream();
-      loc2 << std::fixed << std::setprecision(1) << qt.touch_point(i).get_intensity();
-      disp_str += "/" + loc2.str();
-      SSD1331_display(disp_str.c_str(), i+1);
-    }
-    std::string loop_info = "LCntr: " + std::to_string(debug_loop_counter);
-    SSD1331_display(loop_info.c_str(), 5);
+  std::tuple<size_t, bool> page = page_detect();
+  if (std::get<1>(page)) {
+    SSD1331_clear();
+  }
+  if (std::get<0>(page) == 0) {
+    display_page1();
+  } else {
+    show_one_kamaboko(std::get<0>(page) - 1);
+  }
 }
 /*----------------------------------------------------------------------------*/
 //     NeoPixel
@@ -364,13 +412,10 @@ void callback_for_set_led(float locate, int16_t sensor_value) {
   set_led_by_touch(locate, sensor_value, true);
 }
 void set_led_by_accompaniment() {
-  if (external_note_count <= 0) {
-    return; // No external notes to process
-  }
   for (int i = 0; i < MAX_SENS; i++) {
     int idx = i + KEYBD_LO - 4;
     if (external_note_status[idx] > 0) {
-      set_led_by_touch(idx, external_note_status[idx], false);
+      set_led_by_touch(i, external_note_status[idx], false);
     }
   }
 }
@@ -391,26 +436,24 @@ void set_led_by_touch(float locate, int16_t sensor_value, bool touch) {
     int16_t this_val = static_cast<int16_t>(255 - (locate - nearest_lower)*SLOPE);
     if (this_val < 0) {break;}
     int index = static_cast<int>(nearest_lower);
+    nearest_lower -= 1.0f;
     if (led_status[index%MAX_LIGHT] == TOUCH_STATUS && !touch) {
-      // すでにタッチセンサで点灯している場合、伴奏で消さない
-      nearest_lower -= 1.0f;
+      // すでにタッチセンサで点灯している場合、伴奏は表示しない
       continue;
     }
     set_led_for_note(index, this_val, touch);
-    nearest_lower -= 1.0f;
     led_status[index%MAX_LIGHT] = touch ? TOUCH_STATUS : ACCOMPANIMENT_STATUS;
   }
   while (1) {
     int16_t this_val = static_cast<int16_t>(255 - (nearest_upper - locate)*SLOPE);
     if (this_val < 0) {break;}
     int index = static_cast<int>(nearest_upper);
+    nearest_upper += 1.0f;
     if (led_status[index%MAX_LIGHT] == TOUCH_STATUS && !touch) {
-      // すでにタッチセンサで点灯している場合、伴奏で消さない
-      nearest_upper += 1.0f;
+      // すでにタッチセンサで点灯している場合、伴奏は表示しない
       continue;
     }
     set_led_for_note(index, this_val, touch);
-    nearest_upper += 1.0f;
     led_status[index%MAX_LIGHT] = touch ? TOUCH_STATUS : ACCOMPANIMENT_STATUS;
   }
 }
@@ -421,11 +464,13 @@ void set_led_for_note(size_t index, uint8_t intensity, bool touch) {
   uint8_t green = 0;
 
   if (touch) {
+    // QUBIT Touch : Magenta
     red = (intensity * 4) / 5;
     blue = (intensity * 1) / 5;
   } else {
-    red = (intensity * 4) / 5;
-    green = (intensity * 1) / 5;
+    // QUBIT Accompaniment : Cyan
+    blue = (intensity * 3) / 5;
+    green = (intensity * 2) / 5;
   }
   set_neo_pixel(index, red, green, blue, -1); // Set only red and blue channels
 }
