@@ -18,7 +18,7 @@
 //      Touch Constants
 // =========================================================
 constexpr uint16_t MAX_PADS = MAX_SENS;
-constexpr uint16_t TOUCH_THRESHOLD = 30; // Example threshold for touch point detection
+constexpr uint16_t TOUCH_THRESHOLD = 40; // Threshold for touch point detection
 constexpr float CLOSE_RANGE = 3.0f; // 同じタッチと見做される 10msec あたりの動作範囲
 constexpr size_t FINGER_RANGE = 3; // Maximum number of touch points
 constexpr float HISTERESIS = 0.7f; // Hysteresis value for touch point detection
